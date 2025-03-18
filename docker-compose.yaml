@@ -1,0 +1,74 @@
+services:
+  guardian:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      DB_HOST_READER: mysql
+      DB_HOST_MASTER: mysql
+      DB_NAME: guardian
+      DB_USERNAME: root
+      DB_PASSWORD: password
+      REDIS_HOST: redis
+      REDIS_TYPE: STANDALONE
+      REDIS_PORT: 6379
+      LOGBACK_FILE: logback/logback-development.xml
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+
+  db:
+    image: mysql:8.0
+    container_name: mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: guardian
+    ports:
+      - "3306:3306"
+    volumes:
+      - db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 20s
+      retries: 10
+
+  redis:
+    image: redis:6.2-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+
+  migrate:
+    image: liquibase/liquibase:4.29.2
+    container_name: guardian-migrations
+    volumes:
+      - ./src/main/resources:/liquibase/resources
+    working_dir: /liquibase
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        wget https://downloads.mysql.com/archives/get/p/3/file/mysql-connector-j-8.0.33.tar.gz -O connector.tar.gz &&
+        tar -xvzf connector.tar.gz &&
+        cp mysql-connector-j-8.0.33/mysql-connector-j-8.0.33.jar lib/ &&
+        liquibase --url=jdbc:mysql://mysql:3306/guardian --username=root --password=password --changeLogFile=./resources/changelog.xml update &&
+        liquibase --url=jdbc:mysql://mysql:3306/guardian --username=root --password=password --changeLogFile=none execute-sql --sql-file=./resources/seed.sql
+      "
+
+  mock:
+    build:
+      context: .
+      dockerfile: Dockerfile-mock
+    container_name: mock
+    ports:
+      - "5000:5000"
+volumes:
+  db-data:
